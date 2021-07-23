@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 "container_pull rule"
+
+load("@io_bazel_rules_go//go/private:common.bzl", "env_execute", "executable_extension")
+
 _DOC = """A repository rule that pulls down a Docker base image in a manner suitable for use with the `base` attribute of `container_image`.
 
 This is based on google/containerregistry using google/go-containerregistry.
@@ -81,30 +84,6 @@ _container_pull_attrs = {
     "platform_features": attr.string_list(
         doc = "Specifies platform features when pulling a multi-platform manifest list.",
     ),
-    "puller_darwin": attr.label(
-        executable = True,
-        default = Label("@go_puller_darwin//file:downloaded"),
-        cfg = "host",
-        doc = "Exposed to provide a way to test other pullers on macOS",
-    ),
-    "puller_linux_amd64": attr.label(
-        executable = True,
-        default = Label("@go_puller_linux_amd64//file:downloaded"),
-        cfg = "host",
-        doc = "Exposed to provide a way to test other pullers on Linux",
-    ),
-    "puller_linux_arm64": attr.label(
-        executable = True,
-        default = Label("@go_puller_linux_arm64//file:downloaded"),
-        cfg = "host",
-        doc = "Exposed to provide a way to test other pullers on Linux",
-    ),
-    "puller_linux_s390x": attr.label(
-        executable = True,
-        default = Label("@go_puller_linux_s390x//file:downloaded"),
-        cfg = "host",
-        doc = "Exposed to provide a way to test other pullers on Linux",
-    ),
     "registry": attr.string(
         mandatory = True,
         doc = "The registry from which we are pulling.",
@@ -136,18 +115,9 @@ def _impl(repository_ctx):
 
     import_rule_tags = "[\"{}\"]".format("\", \"".join(repository_ctx.attr.import_tags))
 
-    puller = repository_ctx.attr.puller_linux_amd64
-    if repository_ctx.os.name.lower().startswith("mac os"):
-        puller = repository_ctx.attr.puller_darwin
-    elif repository_ctx.os.name.lower().startswith("linux"):
-        arch = repository_ctx.execute(["uname", "-m"]).stdout.strip()
-        if arch == "arm64" or arch == "aarch64":
-            puller = repository_ctx.attr.puller_linux_arm64
-        elif arch == "s390x":
-            puller = repository_ctx.attr.puller_linux_s390x
-
+    puller = str(repository_ctx.path(Label("@rules_docker_repository_tools//:bin/puller{}".format(executable_extension(repository_ctx)))))
     args = [
-        repository_ctx.path(puller),
+        puller,
         "-directory",
         repository_ctx.path("image"),
         "-os",
@@ -211,7 +181,25 @@ def _impl(repository_ctx):
         else:
             fail("'%s' is invalid value for PULLER_TIMEOUT. Must be an integer." % (timeout_in_secs))
 
-    result = repository_ctx.execute(args, **kwargs)
+    env = {
+        # TODO(gravypod): Fix this later
+        #        k: v
+        #        for k, v in repository_ctx.os.environ
+        #        if k.lower() in [
+        #            "home",
+        #
+        #            # Used by the puller/pusher?
+        #            # TODO(gravypod): Validate that this is the case.
+        #            "ssh_auth_sock",
+        #            "ssl_cert_file",
+        #            "ssl_cert_dir",
+        #            "http_proxy",
+        #            "https_proxy",
+        #            "no_proxy",
+        #        ]
+    }
+
+    result = env_execute(repository_ctx, args, environment = env, **kwargs)
     if result.return_code:
         fail("Pull command failed: %s (%s)" % (result.stderr, " ".join([str(a) for a in args])))
 
